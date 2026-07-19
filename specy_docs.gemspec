@@ -21,7 +21,7 @@ Gem::Specification.new do |spec|
   spec.metadata['changelog_uri'] = 'https://github.com/thabotitus/specy_docs/blob/main/CHANGELOG.md'
 
   spec.files = Dir.chdir(__dir__) do
-    Dir['{app,config,lib}/**/*', 'MIT-LICENSE', 'README.md']
+    Dir['{app,config,lib}/**/*', 'MIT-LICENSE', 'README.md', 'CHANGELOG.md']
   end
   spec.require_paths = ['lib']
 
