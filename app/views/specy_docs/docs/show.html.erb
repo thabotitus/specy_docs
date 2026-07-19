@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title><%= @config.title %></title>
+    <link rel="stylesheet" href="<%= app_css_path %>" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <header class="sidebar__header">
+          <p class="eyebrow"><%= @config.eyebrow %></p>
+          <h1><%= @config.title %></h1>
+        </header>
+        <nav id="endpoint-list" class="endpoint-list" aria-label="Endpoints"></nav>
+      </aside>
+
+      <main class="main">
+        <p id="status" class="status">Loading report…</p>
+        <article id="detail" class="detail" hidden></article>
+      </main>
+    </div>
+
+    <script>
+      window.SPECY_DOCS_CONFIG = {
+        reportPath: <%= raw report_path.to_json %>,
+        maskedHeaderKeys: <%= raw @config.masked_header_keys.to_json %>,
+        rakeTaskHint: "bin/rails specy_docs:report"
+      };
+    </script>
+    <script src="<%= app_js_path %>" type="module"></script>
+  </body>
+</html>
