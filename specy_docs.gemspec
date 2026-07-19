@@ -15,6 +15,11 @@ Gem::Specification.new do |spec|
   spec.license       = 'MIT'
   spec.required_ruby_version = '>= 3.2.0'
 
+  spec.metadata['allowed_push_host'] = 'https://rubygems.org'
+  spec.metadata['homepage_uri'] = spec.homepage
+  spec.metadata['source_code_uri'] = 'https://github.com/thabotitus/specy_docs'
+  spec.metadata['changelog_uri'] = 'https://github.com/thabotitus/specy_docs/blob/main/CHANGELOG.md'
+
   spec.files = Dir.chdir(__dir__) do
     Dir['{app,config,lib}/**/*', 'MIT-LICENSE', 'README.md']
   end
