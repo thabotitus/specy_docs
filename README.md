@@ -6,7 +6,7 @@ Capture RSpec request examples and serve a mountable docs UI.
 
 ```ruby
 # Gemfile
-gem 'specy_docs', path: '../hack/specy_docs'
+gem 'specy_docs'
 ```
 
 ```bash
