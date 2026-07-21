@@ -134,9 +134,12 @@ new_tag="v${new_version}"
 notes_file="$(mktemp)"
 trap 'rm -f "$notes_file"' EXIT
 
+# generate-notes requires a commitish that exists on GitHub (branch name or SHA).
+# Do not use origin/main (local remote-tracking ref) or an unpushed release branch.
+notes_target="$LOCAL_MAIN_BRANCH"
+
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  echo "Generating release notes preview from ${ORIGIN_MAIN_BRANCH}..."
-  generate_release_notes "$new_tag" "$ORIGIN_MAIN_BRANCH" "$notes_start_tag" "$notes_file"
+  echo "Generating release notes preview from ${notes_target}..."
 else
   # Ensure release branch exists, then merge latest main into it.
   if git show-ref --verify --quiet "refs/heads/${RELEASE_BRANCH}"; then
@@ -150,8 +153,9 @@ else
   git merge "$ORIGIN_MAIN_BRANCH" --no-edit
 
   echo "Generating release notes from commits..."
-  generate_release_notes "$new_tag" "$RELEASE_BRANCH" "$notes_start_tag" "$notes_file"
 fi
+
+generate_release_notes "$new_tag" "$notes_target" "$notes_start_tag" "$notes_file"
 
 echo ""
 echo "Release plan"
