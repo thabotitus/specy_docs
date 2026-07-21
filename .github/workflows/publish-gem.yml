@@ -1,0 +1,44 @@
+name: Publish gem
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      - name: Verify tag matches gem version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(ruby -e "require_relative 'lib/specy_docs/version'; print SpecyDocs::VERSION")"
+          if [[ "$tag" != "$version" ]]; then
+            echo "Tag (${GITHUB_REF_NAME}) does not match SpecyDocs::VERSION (${version})" >&2
+            exit 1
+          fi
+
+      - name: Build gem
+        run: gem build specy_docs.gemspec
+
+      - name: Publish to RubyGems
+        env:
+          GEM_HOST_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}
+        run: |
+          mkdir -p ~/.gem
+          printf -- "---\n:rubygems_api_key: %s\n" "$GEM_HOST_API_KEY" > ~/.gem/credentials
+          chmod 0600 ~/.gem/credentials
+          gem push specy_docs-*.gem

@@ -1,6 +1,9 @@
 # SpecyDocs
 
 Capture RSpec request examples and serve a mountable docs UI.
+  - Use it if you want readable low-config docs for your team.
+  - Use it to uncover endpoints that you may not know exist. 
+  - Use it if swagger and the hoops you have to jump are annoying, when you just want to show teams how to use your API with your tested code.
 
 ## Installation
 
@@ -131,3 +134,42 @@ end
 ## Notes for API-only apps
 
 SpecyDocs loads Action Controller and Action View railties inside the engine, so the UI renders even when the host app uses `config.api_only = true`.
+
+## Releasing
+
+Releases are prepared locally and published by GitHub Actions when you publish the draft GitHub release.
+
+### One-time setup
+
+1. Create a RubyGems API key with **Push rubygem** permission.
+2. Add it as a repository secret named `RUBYGEMS_API_KEY`.
+3. Ensure a long-lived `release` branch exists (or let `bin/release` create it on first run).
+
+### Cut a release
+
+```bash
+bin/release
+```
+
+You will be prompted for bump type (patch / minor / major). Release notes are
+generated from commits via the GitHub API (same source as GitHub auto notes),
+previewed for confirmation, then written into `CHANGELOG.md` and the draft release.
+
+The script will:
+
+1. Fetch remotes and tags
+2. Check out `release` and merge `origin/main`
+3. Generate release notes from commits since the previous tag
+4. Bump `lib/specy_docs/version.rb` and prepend those notes to `CHANGELOG.md`
+5. Commit, tag (`vX.Y.Z`), and push `release` + the tag
+6. Create a **draft** GitHub release with the same notes
+
+Then open the draft on GitHub, review the notes, and click **Publish release**. That triggers `.github/workflows/publish-gem.yml`, which builds the gem and runs `gem push`.
+
+Preview without changing anything:
+
+```bash
+bin/release --dry-run
+```
+
+Requires a clean working tree, `gh` authenticated to the repo, and push access to `origin`.

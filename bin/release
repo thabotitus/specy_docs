@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+# Prepare a draft GitHub release. Publishing the release on GitHub triggers
+# Actions to push the gem to RubyGems.
+#
+# Changelog notes are generated from commits via the GitHub API (same source as
+# GitHub's auto release notes), written into CHANGELOG.md, then reused for the
+# draft release body.
+#
+# Usage:
+#   bin/release
+#   bin/release --dry-run
+#
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+RELEASE_BRANCH="release"
+ORIGIN_MAIN_BRANCH="origin/main"
+LOCAL_MAIN_BRANCH="main"
+VERSION_FILE="lib/specy_docs/version.rb"
+CHANGELOG_FILE="CHANGELOG.md"
+REPO_URL="https://github.com/thabotitus/specy_docs"
+DRY_RUN=0
+
+if [[ "${1:-}" == "--dry-run" ]]; then
+  DRY_RUN=1
+elif [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage: bin/release [--dry-run]
+
+Interactively bump the version, generate release notes from commits, update
+CHANGELOG.md, tag on the release branch, and open a draft GitHub release.
+Publishing that release on GitHub runs CI to push the gem to RubyGems.org.
+EOF
+  exit 0
+elif [[ $# -gt 0 ]]; then
+  echo "Unknown argument: $1" >&2
+  echo "Usage: bin/release [--dry-run]" >&2
+  exit 2
+fi
+
+# shellcheck source=lib/ensure_gh.sh
+source "$ROOT/bin/lib/ensure_gh.sh"
+
+# Writes generated release notes to the given file path.
+generate_release_notes() {
+  local tag="$1"
+  local target="$2"
+  local previous="${3:-}"
+  local out_file="$4"
+  local repo
+  local args
+
+  repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+  args=(
+    "repos/${repo}/releases/generate-notes"
+    -f "tag_name=${tag}"
+    -f "target_commitish=${target}"
+  )
+  if [[ -n "$previous" ]]; then
+    args+=(-f "previous_tag_name=${previous}")
+  fi
+
+  gh api "${args[@]}" --jq .body >"$out_file"
+
+  if [[ ! -s "$out_file" ]]; then
+    echo "Error: GitHub returned empty release notes." >&2
+    exit 1
+  fi
+}
+
+require_cmd git
+require_cmd ruby
+ensure_gh
+
+if [[ "$DRY_RUN" -eq 0 && -n "$(git status --porcelain)" ]]; then
+  echo "Error: working tree is dirty. Commit or stash changes before releasing." >&2
+  git status --short >&2
+  exit 1
+fi
+
+echo "Select bump:"
+echo "1 - patch"
+echo "2 - minor"
+echo "3 - major"
+echo ""
+read -r selection
+
+case "$selection" in
+  1) bump="patch" ;;
+  2) bump="minor" ;;
+  3) bump="major" ;;
+  *)
+    echo "Invalid selection" >&2
+    exit 2
+    ;;
+esac
+
+echo ""
+echo "Fetching remotes and tags..."
+git fetch --all --prune --prune-tags
+
+notes_start_tag=""
+latest_tag="$(git describe --tags "$(git rev-list --tags --max-count=1)" 2>/dev/null || true)"
+if [[ -n "$latest_tag" ]]; then
+  notes_start_tag="$latest_tag"
+else
+  latest_tag="v$(ruby -e "require_relative 'lib/specy_docs/version'; print SpecyDocs::VERSION")"
+  echo "No existing tags found; using VERSION file as baseline (${latest_tag})."
+fi
+
+trimmed_string="${latest_tag#v}"
+IFS='.' read -r MAJOR MINOR PATCH <<<"$trimmed_string"
+
+case "$bump" in
+  patch)
+    PATCH=$((PATCH + 1))
+    ;;
+  minor)
+    MINOR=$((MINOR + 1))
+    PATCH=0
+    ;;
+  major)
+    MAJOR=$((MAJOR + 1))
+    MINOR=0
+    PATCH=0
+    ;;
+esac
+
+new_version="${MAJOR}.${MINOR}.${PATCH}"
+new_tag="v${new_version}"
+
+notes_file="$(mktemp)"
+trap 'rm -f "$notes_file"' EXIT
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  echo "Generating release notes preview from ${ORIGIN_MAIN_BRANCH}..."
+  generate_release_notes "$new_tag" "$ORIGIN_MAIN_BRANCH" "$notes_start_tag" "$notes_file"
+else
+  # Ensure release branch exists, then merge latest main into it.
+  if git show-ref --verify --quiet "refs/heads/${RELEASE_BRANCH}"; then
+    git checkout "$RELEASE_BRANCH"
+  elif git show-ref --verify --quiet "refs/remotes/origin/${RELEASE_BRANCH}"; then
+    git checkout -b "$RELEASE_BRANCH" "origin/${RELEASE_BRANCH}"
+  else
+    git checkout -b "$RELEASE_BRANCH" "$ORIGIN_MAIN_BRANCH"
+  fi
+
+  git merge "$ORIGIN_MAIN_BRANCH" --no-edit
+
+  echo "Generating release notes from commits..."
+  generate_release_notes "$new_tag" "$RELEASE_BRANCH" "$notes_start_tag" "$notes_file"
+fi
+
+echo ""
+echo "Release plan"
+echo "  Latest tag : ${latest_tag}"
+echo "  New tag    : ${new_tag}"
+echo "  Dry run    : ${DRY_RUN}"
+echo ""
+echo "Generated notes:"
+echo "----------------------------------------"
+cat "$notes_file"
+echo "----------------------------------------"
+echo ""
+printf "Proceed? [y/N] "
+read -r confirm
+if [[ ! "$confirm" =~ ^[Yy]([Ee][Ss])?$ ]]; then
+  echo "Aborted."
+  exit 1
+fi
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  echo "Dry run complete — no files changed."
+  exit 0
+fi
+
+# Bump VERSION and prepend generated notes to CHANGELOG.md.
+NEW_VERSION="$new_version" REPO_URL="$REPO_URL" NOTES_FILE="$notes_file" \
+ruby <<'RUBY'
+# frozen_string_literal: true
+
+require 'date'
+
+version_file = 'lib/specy_docs/version.rb'
+changelog_file = 'CHANGELOG.md'
+version = ENV.fetch('NEW_VERSION')
+repo_url = ENV.fetch('REPO_URL')
+notes = File.read(ENV.fetch('NOTES_FILE')).strip
+raise 'Generated release notes were empty' if notes.empty?
+
+contents = File.read(version_file)
+updated = contents.sub(/VERSION\s*=\s*['"]\d+\.\d+\.\d+['"]/, "VERSION = '#{version}'")
+raise "Failed to update VERSION in #{version_file}" if updated == contents
+
+File.write(version_file, updated)
+
+date = Date.today.iso8601
+entry = <<~MARKDOWN
+  ## [#{version}] - #{date}
+
+  #{notes}
+MARKDOWN
+link = "[#{version}]: #{repo_url}/releases/tag/v#{version}\n"
+
+changelog = File.read(changelog_file)
+raise "CHANGELOG already has an entry for #{version}" if changelog.include?("## [#{version}]")
+
+header_end = changelog.index(/^## \[/)
+raise 'Could not find an existing version heading in CHANGELOG.md' unless header_end
+raise 'Could not find version links at the bottom of CHANGELOG.md' unless changelog.match?(/^\[\d+\.\d+\.\d+\]:/)
+
+changelog.insert(header_end, "#{entry}\n")
+File.write(changelog_file, "#{changelog.rstrip}\n#{link}")
+
+puts "Updated #{version_file} and #{changelog_file}"
+RUBY
+
+git add "$VERSION_FILE" "$CHANGELOG_FILE"
+git commit -m "Release ${new_tag}"
+
+git tag "$new_tag" -m "$new_tag"
+
+git push origin "$RELEASE_BRANCH"
+git push origin "$new_tag"
+
+git checkout "$LOCAL_MAIN_BRANCH"
+
+gh release create "$new_tag" \
+  --draft \
+  --latest \
+  --title "$new_tag" \
+  --target "$RELEASE_BRANCH" \
+  --verify-tag \
+  --notes-file "$notes_file"
+
+cat <<EOF
+====================================
+Release ${new_tag} ready for deploy
+Publish the draft release on GitHub to push the gem to RubyGems.
+====================================
+EOF
